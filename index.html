@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Jogo de Cabeça - Giroscópio</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #ui {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 20px;
+      color: white;
+      text-shadow: 0 2px 6px rgba(0,0,0,0.8);
+    }
+    #crosshair {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 24px; height: 24px;
+      transform: translate(-50%, -50%);
+      border: 2px solid rgba(255,255,255,0.9);
+      border-radius: 50%;
+      box-shadow: 0 0 8px rgba(0,0,0,0.6);
+    }
+    #crosshair::after {
+      content: "";
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 6px; height: 6px;
+      background: white;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+    }
+    #score { font-size: 22px; font-weight: bold; }
+    #msg {
+      text-align: center;
+      font-size: 16px;
+      background: rgba(0,0,0,0.55);
+      padding: 12px 18px;
+      border-radius: 12px;
+      max-width: 320px;
+      margin: 0 auto;
+    }
+    #permission {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      color: white;
+      text-align: center;
+      padding: 30px;
+    }
+    #permission button {
+      margin-top: 20px;
+      padding: 14px 28px;
+      font-size: 18px;
+      background: #4CAF50;
+      border: none;
+      border-radius: 10px;
+      color: white;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="permission">
+    <div>
+      <h2>Permissão de Movimento</h2>
+      <p>Este jogo usa o giroscópio do celular.<br>Toque no botão abaixo para liberar.</p>
+      <button id="btnPerm">Ativar Giroscópio</button>
+    </div>
+  </div>
+
+  <div id="ui">
+    <div id="score">Pontos: 0</div>
+    <div id="msg">Incline o celular para olhar ao redor<br>Toque na tela para atirar</div>
+  </div>
+  <div id="crosshair"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    let scene, camera, renderer;
+    let cubes = [];
+    let score = 0;
+    let orientation = { alpha: 0, beta: 0, gamma: 0 };
+    let permissionGranted = false;
+
+    const scoreEl = document.getElementById('score');
+    const msgEl = document.getElementById('msg');
+    const permDiv = document.getElementById('permission');
+    const btnPerm = document.getElementById('btnPerm');
+
+    // === Inicialização ===
+    function init() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x111122);
+      scene.fog = new THREE.Fog(0x111122, 8, 35);
+
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+      camera.position.set(0, 1.6, 0); // altura de olhos
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      document.body.appendChild(renderer.domElement);
+
+      // Luzes
+      const ambient = new THREE.AmbientLight(0x404060, 1.2);
+      scene.add(ambient);
+
+      const dir = new THREE.DirectionalLight(0xffffff, 1.5);
+      dir.position.set(5, 10, 7);
+      scene.add(dir);
+
+      // Chão
+      const floorGeo = new THREE.PlaneGeometry(40, 40);
+      const floorMat = new THREE.MeshStandardMaterial({ color: 0x222233, roughness: 0.8 });
+      const floor = new THREE.Mesh(floorGeo, floorMat);
+      floor.rotation.x = -Math.PI / 2;
+      scene.add(floor);
+
+      // Grade no chão
+      const grid = new THREE.GridHelper(40, 40, 0x444466, 0x333355);
+      scene.add(grid);
+
+      // Cubos alvo
+      for (let i = 0; i < 12; i++) {
+        createCube();
+      }
+
+      window.addEventListener('resize', onResize);
+      window.addEventListener('click', shoot);
+      window.addEventListener('touchstart', (e) => { e.preventDefault(); shoot(); }, { passive: false });
+
+      animate();
+    }
+
+    function createCube() {
+      const size = 0.6 + Math.random() * 0.5;
+      const geo = new THREE.BoxGeometry(size, size, size);
+      const mat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color().setHSL(Math.random(), 0.7, 0.55),
+        metalness: 0.3,
+        roughness: 0.4
+      });
+      const cube = new THREE.Mesh(geo, mat);
+
+      // Posição aleatória na frente
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 4 + Math.random() * 10;
+      cube.position.set(
+        Math.cos(angle) * dist,
+        1 + Math.random() * 3,
+        Math.sin(angle) * dist
+      );
+
+      cube.userData = {
+        rotSpeed: (Math.random() - 0.5) * 0.03,
+        floatSpeed: 0.5 + Math.random(),
+        floatOffset: Math.random() * Math.PI * 2
+      };
+
+      scene.add(cube);
+      cubes.push(cube);
+    }
+
+    // === Controle de orientação do celular ===
+    function handleOrientation(e) {
+      if (!permissionGranted) return;
+      // alpha = rotação em torno do eixo Z (bússola)
+      // beta = inclinação frente/trás
+      // gamma = inclinação esquerda/direita
+      orientation.alpha = e.alpha || 0;
+      orientation.beta = e.beta || 0;
+      orientation.gamma = e.gamma || 0;
+    }
+
+    function requestPermission() {
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        // iOS 13+
+        DeviceOrientationEvent.requestPermission()
+          .then(state => {
+            if (state === 'granted') {
+              permissionGranted = true;
+              window.addEventListener('deviceorientation', handleOrientation);
+              permDiv.style.display = 'none';
+              msgEl.textContent = 'Incline o celular para olhar • Toque para atirar';
+            } else {
+              alert('Permissão negada. O jogo não vai funcionar corretamente.');
+            }
+          })
+          .catch(console.error);
+      } else {
+        // Android e navegadores que não pedem permissão explícita
+        permissionGranted = true;
+        window.addEventListener('deviceorientation', handleOrientation);
+        permDiv.style.display = 'none';
+        msgEl.textContent = 'Incline o celular para olhar • Toque para atirar';
+      }
+    }
+
+    btnPerm.addEventListener('click', requestPermission);
+
+    // === Atirar (raycast no centro da tela) ===
+    const raycaster = new THREE.Raycaster();
+    const center = new THREE.Vector2(0, 0); // centro da tela
+
+    function shoot() {
+      if (!permissionGranted) return;
+
+      raycaster.setFromCamera(center, camera);
+      const hits = raycaster.intersectObjects(cubes);
+
+      if (hits.length > 0) {
+        const hit = hits[0].object;
+        scene.remove(hit);
+        cubes = cubes.filter(c => c !== hit);
+        score += 10;
+        scoreEl.textContent = `Pontos: ${score}`;
+
+        // Cria um novo cubo depois de um tempo
+        setTimeout(createCube, 800 + Math.random() * 1200);
+      }
+    }
+
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // === Loop de animação ===
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const t = clock.getElapsedTime();
+
+      // Aplica a orientação do celular na câmera
+      if (permissionGranted) {
+        // Conversão aproximada de DeviceOrientation para rotação da câmera
+        // (funciona bem o suficiente para um jogo simples)
+        const beta = THREE.MathUtils.degToRad(orientation.beta - 90); // frente/trás
+        const gamma = THREE.MathUtils.degToRad(orientation.gamma); // esquerda/direita
+        const alpha = THREE.MathUtils.degToRad(orientation.alpha); // yaw
+
+        // Ordem de rotação: yaw → pitch → roll
+        camera.rotation.order = 'YXZ';
+        camera.rotation.y = -alpha;
+        camera.rotation.x = beta;
+        camera.rotation.z = -gamma;
+      }
+
+      // Anima os cubos
+      cubes.forEach(cube => {
+        cube.rotation.x += cube.userData.rotSpeed;
+        cube.rotation.y += cube.userData.rotSpeed * 0.7;
+        cube.position.y = 1.5 + Math.sin(t * cube.userData.floatSpeed + cube.userData.floatOffset) * 0.6;
+      });
+
+      renderer.render(scene, camera);
+    }
+
+    // Inicia
+    init();
+  </script>
+</body>
+</html>
